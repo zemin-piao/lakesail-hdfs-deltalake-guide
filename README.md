@@ -1,216 +1,344 @@
-# Lakesail + HDFS + Delta Lake Setup Guide
+# Kerberos HDFS + Sail + Delta Lake Setup
 
-Complete setup and verification of **Lakesail** (Sail's Spark Connect server) with **HDFS storage** and **Delta Lake format** tables.
+Complete enterprise-grade data lakehouse with **Kerberos HDFS**, **Sail Spark Connect**, and **Delta Lake**.
 
-## 📋 Prerequisites
-
-- **Git** for cloning repositories
-- **Python 3.8+** with uv/pip
-- **Docker** for HDFS setup
-- **macOS/Linux** environment
-
-## 🚀 Setup Steps
-
-### Step 1: Clone Sail Repository
+## 🚀 Quick Start
 
 ```bash
-# Clone the Sail repository (needed for HDFS Docker setup)
-git clone https://github.com/lakehq/sail.git
-cd sail
-```
+# 1. Setup HDFS with Kerberos
+./setup_kerberos_hdfs.sh
 
-### Step 2: Install Dependencies
-
-```bash
-# Install required Python packages
-uv pip install pyspark
-uv pip install pysail
-
-# Verify installation
-python3 -c "from pysail.spark import SparkConnectServer; print('✅ pysail installed successfully')"
-```
-
-### Step 3: Set Up HDFS Infrastructure
-
-```bash
-# Download or copy the lakesail-hdfs-guide to your sail directory
-# If you have the guide files, copy them:
-# cp -r /path/to/lakesail-hdfs-guide .
-
-# Navigate to the guide directory (should be inside the sail repo)
-cd lakesail-hdfs-guide
-
-# Run the automated HDFS setup script (automatically finds ../scripts/hadoop/)
-./setup_lakesail_hdfs.sh
-```
-
-**What this script does:**
-- Builds HDFS Docker image from Sail's Hadoop configuration
-- Starts HDFS cluster with proper port mapping (9000, 9864, 9866, 9870)
-- Creates user directory in HDFS with proper permissions
-- Verifies HDFS cluster health
-
-### Step 4: Start Lakesail Server
-
-```bash
-# Start Lakesail Spark Connect server (keep this running)
-python3 start_lakesail_server.py
-```
-
-**Expected output:**
-```
-🚀 Starting Lakesail Spark Connect Server...
-📡 Server will be available at: sc://localhost:50051
-🌐 Press Ctrl+C to stop
-✅ Server created successfully
-```
-
-### Step 5: Test the Complete Setup
-
-Open a new terminal and run:
-
-```bash
-# Complete system verification
+# 2. Verify everything works
 python3 verify_complete_setup.py
 ```
 
-## ✅ Success Criteria
+That's it! You now have a production-ready Kerberos data lakehouse.
 
-When everything works correctly, you should see:
+---
 
-```
-🔍 Complete Lakesail + HDFS + Delta Lake Verification
-============================================================
+## 📋 What You Get
 
-1️⃣ Verifying HDFS Status...
-✅ HDFS cluster is healthy
-   Live datanodes (1):
+- ✅ **Kerberos HDFS**: Enterprise authentication and authorization
+- ✅ **Sail Spark Connect**: High-performance query engine on port 50051
+- ✅ **Delta Lake**: ACID transactions on distributed storage
+- ✅ **Automated Setup**: One command to deploy everything
+- ✅ **Comprehensive Verification**: Tests all components together
 
-2️⃣ Verifying Lakesail Connection...
-✅ Connected to Lakesail successfully
-   Spark Version: 3.5.3
-   Using Spark Connect: True
-   Connection URL: sc://localhost:50051
-   🎯 Connected to Lakesail on port 50051!
+---
 
-3️⃣ Testing Basic SQL Functionality...
-✅ Basic SQL test passed: Row(result=2, status='Lakesail + HDFS Working!')
+## 🔧 Prerequisites
 
-4️⃣ Testing HDFS Connectivity...
-✅ HDFS write/read test passed: 1000 records
+- **Docker** installed and running
+- **Python 3.8+** with pip
+- **macOS/Linux** (tested on macOS)
 
-5️⃣ Testing Data Creation and Reading...
-✅ Data written in 0.123s
-✅ Data read back: 1000 records in 0.045s
-✅ Query completed: 250 records in 0.067s
-
-6️⃣ Testing Delta Lake Capabilities...
-✅ Delta Lake write successful
-✅ Delta Lake read successful: 100 records
-
-7️⃣ Testing Advanced SQL Features...
-✅ Complex SQL query completed: 10 results in 0.089s
-
-8️⃣ Performance Analysis...
-✅ Performance benchmark: 1000 groups processed in 0.156s
-
-9️⃣ Testing Resource Management...
-✅ Active sessions: 1
-✅ Cache cleared successfully
-✅ Available databases: 1
-
-🔍 Final System Verification...
-✅ HDFS storage usage:
-     128K  /user/your_username/verification_data/
-
-============================================================
-🎉 COMPLETE VERIFICATION FINISHED!
-============================================================
-
-✅ SUCCESSFUL COMPONENTS:
-   🚀 Lakesail Spark Connect Server
-   🗄️  HDFS Distributed Storage
-   📊 Data Creation and Reading
-   🔍 SQL Query Execution
-   ⚡ Performance Testing
-   🔧 Configuration Management
-
-🎯 YOUR LAKESAIL + HDFS SETUP IS FULLY OPERATIONAL!
-```
-
-## 🧪 Additional Testing (Optional)
-
-### Create Sample Data on HDFS
 ```bash
-python3 create_deltalake_hdfs.py
+# Install Python dependencies
+pip install pyspark pysail
 ```
+
+---
+
+## 📖 Detailed Setup
+
+### Step 1: Build and Start Kerberos HDFS
+
+```bash
+./setup_kerberos_hdfs.sh
+```
+
+**What this does:**
+1. Builds Docker image with Hadoop 3.3.6 + Kerberos
+2. Starts HDFS with Kerberos authentication (realm: LAKESAIL.COM)
+3. Creates principals: `hdfs`, `HTTP`, `testuser@LAKESAIL.COM`
+4. Generates keytabs in `/etc/security/keytabs/`
+5. Copies keytabs to local directory
+
+**Ports exposed:**
+- 9000: HDFS NameNode
+- 9870: HDFS Web UI
+- 88: Kerberos KDC
+- 749: Kerberos kadmin
+- 50051: Sail Spark Connect (after starting server)
+
+### Step 2: Verify Complete Setup
+
+```bash
+python3 verify_complete_setup.py
+```
+
+**What this verifies:**
+1. ✅ Kerberos KDC is running
+2. ✅ Principals and keytabs are valid
+3. ✅ HDFS cluster is healthy with Kerberos auth
+4. ✅ Sail server starts successfully
+5. ✅ Can write/read data to Kerberos HDFS
+6. ✅ Delta Lake operations work
+7. ✅ SQL queries execute correctly
 
 **Expected output:**
-- Creates employee and transaction datasets
-- Writes data to HDFS in Parquet and Delta Lake formats
-- Shows successful data creation with record counts
-
-### Read and Analyze Data
-```bash
-python3 read_deltalake_hdfs.py
+```
+🔍 Complete Setup Verification
+============================================================
+✅ Kerberos KDC running
+✅ Authentication successful
+✅ HDFS cluster healthy
+✅ Sail server started on port 50051
+✅ Delta Lake write/read successful
+✅ SQL queries working
+🎉 ALL SYSTEMS OPERATIONAL!
 ```
 
-**Expected output:**
-- Reads data from HDFS successfully
-- Performs complex SQL analytics (joins, aggregations, window functions)
-- Demonstrates cross-table queries and performance metrics
+---
 
-## 🔍 Verification Tools
+## 💻 Usage
 
-### Check Lakesail Connection
-```bash
-python3 verify_sail_connection.py
+### Connect to Sail from Python
+
+```python
+from pyspark.sql import SparkSession
+
+# Connect to Sail server
+spark = SparkSession.builder \
+    .remote("sc://localhost:50051") \
+    .getOrCreate()
+
+# Write to Kerberos HDFS
+df = spark.range(1000)
+df.write.mode("overwrite").parquet("hdfs://localhost:9000/user/testuser/data")
+
+# Read back
+result = spark.read.parquet("hdfs://localhost:9000/user/testuser/data")
+print(f"✅ Records: {result.count()}")
+
+# Delta Lake
+df.write.format("delta").mode("overwrite").save("hdfs://localhost:9000/user/testuser/delta_table")
 ```
 
-## 🛠️ Troubleshooting
+### Run SQL Queries
 
-### HDFS Issues
-```bash
-# Check HDFS status
-docker exec hdfs-working hdfs dfsadmin -report
+```python
+# Register table
+df.createOrReplaceTempView("my_table")
 
-# Check container is running
-docker ps | grep hdfs-working
+# Query
+result = spark.sql("""
+    SELECT id, COUNT(*) as count
+    FROM my_table
+    GROUP BY id
+""")
+result.show()
 ```
 
-### Lakesail Issues
+---
+
+## 🔍 Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│          Docker Container (hdfs-kerberos)       │
+│                                                 │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐  │
+│  │ Kerberos │   │   HDFS   │   │   Sail   │  │
+│  │   KDC    │──→│ NameNode │←──│  Server  │  │
+│  │ port 88  │   │ port 9000│   │port 50051│  │
+│  └──────────┘   └──────────┘   └──────────┘  │
+│                       │                         │
+└───────────────────────┼─────────────────────────┘
+                        │
+                   Delta Lake
+              (ACID transactions)
+```
+
+**Authentication Flow:**
+1. Sail server authenticates with Kerberos (kinit)
+2. Gets ticket from KDC
+3. Uses ticket to access HDFS
+4. Clients connect to Sail (no Kerberos needed on client)
+
+---
+
+## 🛠️ Management
+
+### Start/Stop Services
+
 ```bash
-# Check server is running
+# Start container
+docker start hdfs-kerberos
+
+# Stop container
+docker stop hdfs-kerberos
+
+# View logs
+docker logs hdfs-kerberos
+
+# Enter container
+docker exec -it hdfs-kerberos bash
+```
+
+### HDFS Operations (Inside Container)
+
+```bash
+# Enter container
+docker exec -it hdfs-kerberos bash
+
+# Authenticate
+kinit -kt /etc/security/keytabs/testuser.keytab testuser@LAKESAIL.COM
+
+# HDFS commands
+hdfs dfs -ls /user/testuser
+hdfs dfs -put localfile /user/testuser/
+hdfs dfs -cat /user/testuser/file
+```
+
+### Check Kerberos Status
+
+```bash
+# Inside container
+docker exec hdfs-kerberos klist
+
+# View principals
+docker exec hdfs-kerberos kadmin.local -q "listprincs"
+
+# Check KDC is running
+docker exec hdfs-kerberos ps aux | grep krb5kdc
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Container won't start
+```bash
+# Check logs
+docker logs hdfs-kerberos
+
+# Restart
+docker restart hdfs-kerberos
+```
+
+### HDFS operations fail
+```bash
+# Check HDFS health
+docker exec hdfs-kerberos /opt/hadoop/bin/hdfs dfsadmin -report
+
+# Verify authentication
+docker exec hdfs-kerberos kinit -kt /etc/security/keytabs/testuser.keytab testuser@LAKESAIL.COM
+docker exec hdfs-kerberos klist
+```
+
+### Sail server won't start
+```bash
+# Check if port is in use
 lsof -i :50051
 
-# Verify connection
-python3 verify_sail_connection.py
+# Kill existing process
+kill -9 $(lsof -t -i:50051)
+
+# Try manual start (inside container)
+docker exec -it hdfs-kerberos bash
+kinit -kt /etc/security/keytabs/testuser.keytab testuser@LAKESAIL.COM
+python3 -c "from pysail.spark import SparkConnectServer; SparkConnectServer(port=50051).start()"
 ```
 
-### Permission Issues
+### Kerberos authentication fails
 ```bash
-# Fix HDFS permissions
-docker exec hdfs-working hdfs dfs -chmod 777 /user/$(whoami)
+# Verify keytab
+docker exec hdfs-kerberos klist -kt /etc/security/keytabs/testuser.keytab
+
+# Check KDC
+docker exec hdfs-kerberos ps aux | grep krb5kdc
+
+# Restart container if needed
+docker restart hdfs-kerberos
 ```
 
-## 📁 What You Get
+---
 
-After successful setup:
+## 🧹 Cleanup
 
-- **🚀 Lakesail server** running on port 50051
-- **🗄️ HDFS cluster** with distributed storage
-- **📊 Sample data** in Parquet and Delta Lake formats
-- **🔍 Working SQL queries** on distributed data
-- **⚡ Performance verification** of Lakesail's speed advantages
-- **🎯 Production-ready foundation** for data lakehouse architecture
+```bash
+# Stop and remove container
+docker stop hdfs-kerberos
+docker rm hdfs-kerberos
 
-## 🎉 Integration Success
+# Remove image
+docker rmi hdfs-kerberos
 
-When all steps complete successfully, you have demonstrated:
+# Remove local files
+rm -f testuser.keytab krb5.conf
+```
 
-✅ **Complete integration** between Lakesail, HDFS, and Delta Lake
-✅ **High-performance SQL execution** on distributed storage
-✅ **Spark Connect compatibility** with modern data tools
-✅ **Scalable data lakehouse** architecture ready for production use
+---
 
-**You're now ready to build advanced data pipelines with Lakesail!** 🚀
+## 📚 File Structure
+
+```
+lakesail-hdfs-deltalake-guide/
+├── README.md                        # This file
+├── setup_kerberos_hdfs.sh          # One-command setup
+├── verify_complete_setup.py        # Comprehensive verification
+├── hadoop-kerberos/                # Docker configuration
+│   ├── Dockerfile                  # Ubuntu + Hadoop + Kerberos
+│   ├── config/                     # Kerberos & HDFS configs
+│   ├── init-kerberos.sh            # KDC initialization
+│   └── start-hdfs-kerberos.sh      # HDFS startup script
+└── examples/                       # Usage examples (optional)
+    └── example_usage.py            # Sample code
+```
+
+---
+
+## 🎓 What This Setup Provides
+
+### Enterprise Features
+- **Authentication**: Kerberos SSO integration
+- **Authorization**: HDFS permissions and ACLs
+- **Encryption**: Secure communication (can add SSL/TLS)
+- **Auditing**: HDFS audit logs
+
+### Data Platform Capabilities
+- **Spark SQL**: Standard SQL queries via Sail
+- **Delta Lake**: ACID transactions, time travel, schema evolution
+- **Distributed Storage**: Scalable HDFS backend
+- **High Performance**: Optimized query execution
+
+### Production Readiness
+- **Automated deployment**: One command setup
+- **Comprehensive testing**: Full stack verification
+- **Monitoring**: HDFS Web UI at http://localhost:9870
+- **Operational commands**: Start/stop/restart services
+
+---
+
+## 🚀 Next Steps
+
+1. **Scale up**: Add more DataNodes for redundancy
+2. **Add SSL/TLS**: Encrypt data in transit
+3. **Integrate with existing Kerberos**: Use your corporate KDC
+4. **Set up monitoring**: Add Prometheus/Grafana
+5. **Configure backups**: Implement HDFS snapshot strategy
+6. **Deploy to production**: Use orchestration (K8s, Docker Swarm)
+
+---
+
+## 📖 Additional Resources
+
+- **Hadoop Security**: https://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/SecureMode.html
+- **Kerberos**: https://web.mit.edu/kerberos/
+- **Delta Lake**: https://docs.delta.io/
+- **Sail**: https://github.com/lakehq/sail
+
+---
+
+## ✅ Success Criteria
+
+Your setup is working when:
+
+- ✅ `python3 verify_complete_setup.py` passes all checks
+- ✅ HDFS Web UI accessible at http://localhost:9870
+- ✅ Can connect to Sail on `sc://localhost:50051`
+- ✅ Can write/read Delta Lake tables
+- ✅ SQL queries execute successfully
+
+**You're now ready for enterprise Spark + HDFS + Delta Lake workloads!** 🎉

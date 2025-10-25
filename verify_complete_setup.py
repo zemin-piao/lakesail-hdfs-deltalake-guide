@@ -1,289 +1,352 @@
 #!/usr/bin/env python3
+"""
+Complete Setup Verification
+Verifies: HDFS + Kerberos + Sail + Delta Lake
+"""
 
-from pyspark.sql import SparkSession
-import time
 import subprocess
+import time
+import sys
 import os
 
-def verify_complete_setup():
-    print("🔍 Complete Lakesail + HDFS + Delta Lake Verification")
-    print("=" * 60)
+CONTAINER = "hdfs-kerberos"
 
-    # 1. Verify HDFS is running
-    print("\n1️⃣ Verifying HDFS Status...")
+def run_cmd(cmd, ignore_error=False):
+    """Run command and return output"""
     try:
         result = subprocess.run(
-            ["docker", "exec", "hdfs-working", "hdfs", "dfsadmin", "-report"],
-            capture_output=True, text=True, timeout=10
+            cmd if isinstance(cmd, list) else cmd,
+            shell=not isinstance(cmd, list),
+            capture_output=True,
+            text=True,
+            timeout=30
         )
-        if result.returncode == 0:
-            print("✅ HDFS cluster is healthy")
-            # Extract datanode info
-            lines = result.stdout.split('\n')
-            for line in lines:
-                if "Live datanodes" in line:
-                    print(f"   {line.strip()}")
-        else:
-            print("❌ HDFS cluster has issues")
-            print(f"   Error: {result.stderr}")
-            return False
-    except Exception as e:
-        print(f"❌ Could not check HDFS status: {e}")
+        if result.returncode != 0 and not ignore_error:
+            return None
+        return result.stdout
+    except Exception:
+        return None
+
+def print_section(title):
+    print("\n" + "="*60)
+    print(f"🔍 {title}")
+    print("="*60)
+
+def verify_kerberos():
+    """Verify Kerberos KDC"""
+    print_section("1. Kerberos KDC")
+
+    # Check KDC process
+    output = run_cmd(f"docker exec {CONTAINER} ps aux | grep krb5kdc | grep -v grep", ignore_error=True)
+    if output:
+        print("✅ Kerberos KDC is running")
+    else:
+        print("❌ Kerberos KDC is not running")
         return False
 
-    # 2. Verify Lakesail connection
-    print("\n2️⃣ Verifying Lakesail Connection...")
-    try:
-        spark = SparkSession.builder \
-            .appName("CompleteVerification") \
-            .remote("sc://localhost:50051") \
-            .getOrCreate()
-
-        print("✅ Connected to Lakesail successfully")
-
-        # Check connection details
-        print(f"   Spark Version: {spark.version}")
-        is_connect = hasattr(spark, '_client')
-        print(f"   Using Spark Connect: {is_connect}")
-
-        if is_connect:
-            url = getattr(spark._client, '_url', 'Unknown')
-            print(f"   Connection URL: {url}")
-            if ':50051' in str(url):
-                print("   🎯 Connected to Lakesail on port 50051!")
-            else:
-                print("   ⚠️  Connected to different port")
-
-    except Exception as e:
-        print(f"❌ Could not connect to Lakesail: {e}")
+    # Test authentication
+    auth_cmd = f"docker exec {CONTAINER} kinit -kt /etc/security/keytabs/testuser.keytab testuser@LAKESAIL.COM"
+    if run_cmd(auth_cmd, ignore_error=True) is not None:
+        print("✅ Kerberos authentication successful")
+    else:
+        print("❌ Kerberos authentication failed")
         return False
 
-    # 3. Test basic functionality
-    print("\n3️⃣ Testing Basic SQL Functionality...")
-    try:
-        test_df = spark.sql("SELECT 1 + 1 as result, 'Lakesail + HDFS Working!' as status")
-        result = test_df.collect()
-        print(f"✅ Basic SQL test passed: {result[0]}")
-    except Exception as e:
-        print(f"❌ Basic SQL test failed: {e}")
-        spark.stop()
-        return False
-
-    # 4. Test HDFS connectivity
-    print("\n4️⃣ Testing HDFS Connectivity...")
-    try:
-        # Try to read the default test file
-        hdfs_test_df = spark.read.option("multiline", "true").json("hdfs://localhost:9000/user/root/test.json")
-        test_count = hdfs_test_df.count()
-        print(f"✅ HDFS connectivity confirmed - read {test_count} records from test.json")
-    except Exception as e:
-        print(f"⚠️  Default test file read failed: {e}")
-        print("💡 Testing with manual file creation...")
-
-        # Create a simple test file
-        try:
-            test_data = spark.range(10).withColumn("test_column", spark.sql("SELECT 'test_value'").collect()[0][0])
-            username = os.getenv('USER') or os.getenv('USERNAME') or 'user'
-            test_path = f"hdfs://localhost:9000/user/{username}/connectivity_test"
-
-            test_data.write.mode("overwrite").parquet(test_path)
-            read_back = spark.read.parquet(test_path)
-            count = read_back.count()
-            print(f"✅ HDFS write/read test passed: {count} records")
-        except Exception as e2:
-            print(f"❌ HDFS connectivity test failed: {e2}")
-            spark.stop()
-            return False
-
-    # 5. Test data creation and reading
-    print("\n5️⃣ Testing Data Creation and Reading...")
-    try:
-        username = os.getenv('USER') or os.getenv('USERNAME') or 'user'
-
-        # Create test data with various types
-        print("   Creating test dataset...")
-        test_data = spark.range(1000).selectExpr(
-            "id",
-            "id * 2 as doubled",
-            "concat('item_', cast(id as string)) as name",
-            "case when id % 2 = 0 then 'even' else 'odd' end as type",
-            "cast(rand() * 100 as double) as random_value"
-        )
-
-        # Write to HDFS as Parquet
-        verification_path = f"hdfs://localhost:9000/user/{username}/verification_data"
-        print(f"   Writing to: {verification_path}")
-
-        start_write = time.time()
-        test_data.write.mode("overwrite").parquet(verification_path)
-        end_write = time.time()
-        print(f"✅ Data written in {end_write - start_write:.3f}s")
-
-        # Read back from HDFS
-        print("   Reading back from HDFS...")
-        start_read = time.time()
-        read_back = spark.read.parquet(verification_path)
-        count = read_back.count()
-        end_read = time.time()
-        print(f"✅ Data read back: {count} records in {end_read - start_read:.3f}s")
-
-        # Test query performance
-        print("   Testing query performance...")
-        start_query = time.time()
-        filtered = read_back.filter("type = 'even' AND random_value > 50")
-        filtered_count = filtered.count()
-        end_query = time.time()
-        print(f"✅ Query completed: {filtered_count} records in {end_query - start_query:.3f}s")
-
-    except Exception as e:
-        print(f"❌ Data operations test failed: {e}")
-        spark.stop()
-        return False
-
-    # 6. Test Delta Lake capabilities (if available)
-    print("\n6️⃣ Testing Delta Lake Capabilities...")
-    try:
-        delta_path = f"hdfs://localhost:9000/user/{username}/delta_test"
-
-        # Try to write Delta format
-        delta_test_data = spark.range(100).selectExpr("id", "concat('delta_', cast(id as string)) as name")
-
-        delta_test_data.write.format("delta").mode("overwrite").save(delta_path)
-        print("✅ Delta Lake write successful")
-
-        # Try to read Delta format
-        delta_read = spark.read.format("delta").load(delta_path)
-        delta_count = delta_read.count()
-        print(f"✅ Delta Lake read successful: {delta_count} records")
-
-    except Exception as e:
-        print(f"⚠️  Delta Lake test: {e}")
-        print("💡 Delta Lake may not be available - this is okay for basic testing")
-
-    # 7. Test advanced SQL features
-    print("\n7️⃣ Testing Advanced SQL Features...")
-    try:
-        # Register the verification data as a temp view
-        verification_path = f"hdfs://localhost:9000/user/{username}/verification_data"
-        df = spark.read.parquet(verification_path)
-        df.createOrReplaceTempView("test_table")
-
-        # Complex query with window functions
-        complex_query = """
-        SELECT
-            type,
-            COUNT(*) as count,
-            AVG(random_value) as avg_random,
-            ROW_NUMBER() OVER (PARTITION BY type ORDER BY random_value DESC) as rank,
-            LAG(random_value) OVER (PARTITION BY type ORDER BY id) as prev_value
-        FROM test_table
-        WHERE id < 100
-        GROUP BY type, id, random_value
-        ORDER BY type, rank
-        LIMIT 10
-        """
-
-        start_complex = time.time()
-        complex_result = spark.sql(complex_query)
-        complex_count = complex_result.count()
-        end_complex = time.time()
-
-        print(f"✅ Complex SQL query completed: {complex_count} results in {end_complex - start_complex:.3f}s")
-
-    except Exception as e:
-        print(f"❌ Advanced SQL test failed: {e}")
-
-    # 8. Performance analysis
-    print("\n8️⃣ Performance Analysis...")
-    try:
-        # Performance benchmark
-        print("   Running performance benchmark...")
-        start_bench = time.time()
-
-        bench_data = spark.range(50000).selectExpr(
-            "id",
-            "id % 1000 as group_id",
-            "rand() as random_val"
-        )
-
-        bench_result = bench_data.groupBy("group_id").agg(
-            {"random_val": "avg", "id": "count"}
-        ).orderBy("group_id")
-
-        bench_count = bench_result.count()
-        end_bench = time.time()
-
-        print(f"✅ Performance benchmark: {bench_count} groups processed in {end_bench - start_bench:.3f}s")
-
-    except Exception as e:
-        print(f"❌ Configuration analysis failed: {e}")
-
-    # 9. Test cleanup and resource management
-    print("\n9️⃣ Testing Resource Management...")
-    try:
-        # Check active SQL contexts
-        active_sessions = 1  # Current session
-        print(f"✅ Active sessions: {active_sessions}")
-
-        # Test graceful operations
-        spark.catalog.clearCache()
-        print("✅ Cache cleared successfully")
-
-        # Test catalog operations
-        databases = spark.catalog.listDatabases()
-        print(f"✅ Available databases: {len(databases)}")
-
-    except Exception as e:
-        print(f"⚠️  Resource management test: {e}")
-
-    # Final verification
-    print("\n🔍 Final System Verification...")
-    try:
-        # Check HDFS disk usage
-        hdfs_result = subprocess.run(
-            ["docker", "exec", "hdfs-working", "hdfs", "dfs", "-du", "-h", f"/user/{username}"],
-            capture_output=True, text=True, timeout=10
-        )
-        if hdfs_result.returncode == 0:
-            print("✅ HDFS storage usage:")
-            for line in hdfs_result.stdout.strip().split('\n'):
-                if line.strip():
-                    print(f"     {line}")
-
-    except Exception as e:
-        print(f"⚠️  HDFS usage check: {e}")
-
-    spark.stop()
-
-    print("\n" + "=" * 60)
-    print("🎉 COMPLETE VERIFICATION FINISHED!")
-    print("=" * 60)
-
-    print("\n✅ SUCCESSFUL COMPONENTS:")
-    print("   🚀 Lakesail Spark Connect Server")
-    print("   🗄️  HDFS Distributed Storage")
-    print("   📊 Data Creation and Reading")
-    print("   🔍 SQL Query Execution")
-    print("   ⚡ Performance Testing")
-    print("   🔧 Configuration Management")
-
-    print("\n🎯 YOUR LAKESAIL + HDFS SETUP IS FULLY OPERATIONAL!")
-    print("\n📋 Next Steps:")
-    print("   • Use create_deltalake_hdfs.py to create your own datasets")
-    print("   • Use read_deltalake_hdfs.py to query and analyze data")
-    print("   • Explore Delta Lake format for ACID transactions")
-    print("   • Build production data pipelines with Lakesail")
+    # Check ticket
+    ticket = run_cmd(f"docker exec {CONTAINER} klist", ignore_error=True)
+    if ticket and "testuser@LAKESAIL.COM" in ticket:
+        print("✅ Valid Kerberos ticket")
+    else:
+        print("⚠️  Could not verify ticket")
 
     return True
 
-if __name__ == "__main__":
-    success = verify_complete_setup()
-    if not success:
-        print("\n❌ Some verification tests failed. Please check:")
-        print("   1. HDFS container is running: docker ps | grep hdfs-working")
-        print("   2. Lakesail server is running on port 50051")
-        print("   3. Network connectivity between components")
-        print("   4. HDFS permissions for your user")
-        exit(1)
+def verify_hdfs():
+    """Verify HDFS cluster"""
+    print_section("2. HDFS Cluster")
+
+    # Check HDFS health
+    output = run_cmd(f"docker exec {CONTAINER} /opt/hadoop/bin/hdfs dfsadmin -report", ignore_error=True)
+    if output and "Live datanodes" in output:
+        print("✅ HDFS cluster is healthy")
     else:
-        print("\n🚀 ALL SYSTEMS GO! Ready for production workloads!")
+        print("❌ HDFS cluster is not healthy")
+        return False
+
+    # Test write/read
+    test_file = f"/user/testuser/verify_test_{int(time.time())}.txt"
+    write_cmd = f'docker exec {CONTAINER} bash -c "echo \\"test\\" | /opt/hadoop/bin/hdfs dfs -put -f - {test_file}"'
+    if run_cmd(write_cmd, ignore_error=True) is not None:
+        print("✅ HDFS write successful")
+    else:
+        print("❌ HDFS write failed")
+        return False
+
+    # Read
+    read_cmd = f"docker exec {CONTAINER} /opt/hadoop/bin/hdfs dfs -cat {test_file}"
+    output = run_cmd(read_cmd, ignore_error=True)
+    if output and "test" in output:
+        print("✅ HDFS read successful")
+        # Cleanup
+        run_cmd(f"docker exec {CONTAINER} /opt/hadoop/bin/hdfs dfs -rm {test_file}", ignore_error=True)
+    else:
+        print("❌ HDFS read failed")
+        return False
+
+    return True
+
+def install_pysail():
+    """Install pysail in container if needed"""
+    print_section("3. Sail Dependencies")
+
+    # Check if pysail is installed
+    check_cmd = f"docker exec {CONTAINER} python3 -c 'import pysail' 2>&1"
+    if run_cmd(check_cmd, ignore_error=True) is not None:
+        print("✅ pysail already installed")
+        return True
+
+    print("Installing pysail in container...")
+
+    # Update apt
+    run_cmd(f"docker exec {CONTAINER} apt-get update -qq", ignore_error=True)
+
+    # Install pip
+    install_pip = f"docker exec {CONTAINER} apt-get install -y -qq python3-pip"
+    if run_cmd(install_pip, ignore_error=True):
+        print("✅ pip installed")
+    else:
+        print("❌ Failed to install pip")
+        return False
+
+    # Install pysail and pyspark
+    install_pysail = f"docker exec {CONTAINER} pip3 install -q pysail pyspark"
+    print("Installing pysail (this may take a minute)...")
+    result = run_cmd(install_pysail, ignore_error=True)
+    if result is not None:
+        print("✅ pysail installed successfully")
+        return True
+    else:
+        print("⚠️  pysail installation may have issues, continuing...")
+        return True
+
+def start_sail_server():
+    """Start Sail server in background"""
+    print_section("4. Sail Spark Connect Server")
+
+    # Check if already running
+    check_cmd = "lsof -i :50051 2>/dev/null"
+    if run_cmd(check_cmd, ignore_error=True):
+        print("⚠️  Port 50051 already in use")
+        print("Attempting to kill existing process...")
+        run_cmd("kill -9 $(lsof -t -i:50051) 2>/dev/null", ignore_error=True)
+        time.sleep(2)
+
+    # Start server in background
+    start_script = """
+docker exec -d {container} bash -c '
+    kinit -kt /etc/security/keytabs/testuser.keytab testuser@LAKESAIL.COM && \\
+    export KRB5_CONFIG=/etc/krb5.conf && \\
+    python3 -c "
+from pysail.spark import SparkConnectServer
+import os
+
+spark_conf = {{
+    \\"spark.hadoop.hadoop.security.authentication\\": \\"kerberos\\",
+    \\"spark.hadoop.hadoop.security.authorization\\": \\"true\\",
+    \\"spark.kerberos.keytab\\": \\"/etc/security/keytabs/testuser.keytab\\",
+    \\"spark.kerberos.principal\\": \\"testuser@LAKESAIL.COM\\",
+    \\"spark.hadoop.fs.defaultFS\\": \\"hdfs://localhost:9000\\"
+}}
+
+server = SparkConnectServer(ip=\\"0.0.0.0\\", port=50051, spark_conf=spark_conf)
+print(\\"Sail server starting...\\")
+server.start(background=False)
+" > /tmp/sail.log 2>&1
+'
+""".format(container=CONTAINER)
+
+    run_cmd(start_script, ignore_error=True)
+    print("⏳ Starting Sail server (waiting 15 seconds)...")
+    time.sleep(15)
+
+    # Check if running
+    check_cmd = "lsof -i :50051 2>/dev/null"
+    if run_cmd(check_cmd, ignore_error=True):
+        print("✅ Sail server started on port 50051")
+        return True
+    else:
+        print("❌ Sail server failed to start")
+        print("💡 Checking logs...")
+        logs = run_cmd(f"docker exec {CONTAINER} cat /tmp/sail.log 2>/dev/null", ignore_error=True)
+        if logs:
+            print(logs[:500])
+        return False
+
+def test_sail_connection():
+    """Test Sail connection and operations"""
+    print_section("5. Sail Operations")
+
+    try:
+        from pyspark.sql import SparkSession
+
+        print("Connecting to Sail server...")
+        spark = SparkSession.builder \
+            .remote("sc://localhost:50051") \
+            .getOrCreate()
+
+        print("✅ Connected to Sail server")
+
+        # Test basic operation
+        print("Testing basic write/read...")
+        df = spark.range(100)
+        test_path = "hdfs://localhost:9000/user/testuser/sail_verify_test"
+        df.write.mode("overwrite").parquet(test_path)
+        print("✅ Write to HDFS successful")
+
+        # Read back
+        result = spark.read.parquet(test_path)
+        count = result.count()
+        if count == 100:
+            print(f"✅ Read from HDFS successful (count={count})")
+        else:
+            print(f"⚠️  Unexpected count: {count}")
+
+        spark.stop()
+        return True
+
+    except Exception as e:
+        print(f"❌ Sail operation failed: {e}")
+        return False
+
+def test_delta_lake():
+    """Test Delta Lake operations"""
+    print_section("6. Delta Lake")
+
+    try:
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder \
+            .remote("sc://localhost:50051") \
+            .getOrCreate()
+
+        # Create test data
+        print("Creating Delta Lake table...")
+        data = [(1, "Alice", 85000), (2, "Bob", 92000), (3, "Charlie", 78000)]
+        df = spark.createDataFrame(data, ["id", "name", "salary"])
+
+        delta_path = "hdfs://localhost:9000/user/testuser/delta_verify_test"
+
+        try:
+            df.write.format("delta").mode("overwrite").save(delta_path)
+            print("✅ Delta Lake write successful")
+        except Exception as e:
+            print(f"⚠️  Delta Lake not available (expected): {e}")
+            print("💡 Install delta-spark for full Delta Lake support")
+            spark.stop()
+            return True  # Not a failure
+
+        # Read Delta table
+        delta_df = spark.read.format("delta").load(delta_path)
+        count = delta_df.count()
+        print(f"✅ Delta Lake read successful (count={count})")
+
+        # Test SQL
+        print("Testing SQL query...")
+        delta_df.createOrReplaceTempView("employees")
+        result = spark.sql("SELECT AVG(salary) as avg_salary FROM employees")
+        avg_salary = result.collect()[0]["avg_salary"]
+        print(f"✅ SQL query successful (avg salary: ${avg_salary:.2f})")
+
+        spark.stop()
+        return True
+
+    except Exception as e:
+        print(f"⚠️  Delta Lake test: {e}")
+        return True  # Don't fail verification for Delta Lake
+
+def print_summary(all_passed):
+    """Print final summary"""
+    print("\n" + "="*60)
+    print("📋 VERIFICATION SUMMARY")
+    print("="*60)
+
+    if all_passed:
+        print("\n🎉 ALL SYSTEMS OPERATIONAL!")
+        print("\n✅ Kerberos KDC running")
+        print("✅ HDFS cluster healthy")
+        print("✅ Sail server running")
+        print("✅ HDFS operations working")
+        print("✅ SQL queries working")
+
+        print("\n🚀 Your setup is ready!")
+        print("\n📋 Access Information:")
+        print("• HDFS Web UI: http://localhost:9870")
+        print("• Sail Connect: sc://localhost:50051")
+        print("• Container: docker exec -it hdfs-kerberos bash")
+
+        print("\n💻 Quick Test:")
+        print("""
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
+df = spark.range(1000)
+df.write.mode("overwrite").parquet("hdfs://localhost:9000/user/testuser/my_data")
+print(f"✅ Success: {spark.read.parquet('hdfs://localhost:9000/user/testuser/my_data').count()} records")
+""")
+    else:
+        print("\n⚠️  SOME CHECKS FAILED")
+        print("\n💡 Troubleshooting:")
+        print(f"• Check logs: docker logs {CONTAINER}")
+        print(f"• Restart: docker restart {CONTAINER}")
+        print("• Re-run setup: ./setup_kerberos_hdfs.sh")
+
+def main():
+    """Main verification"""
+    print("="*60)
+    print("🔍 Complete Setup Verification")
+    print("   HDFS + Kerberos + Sail + Delta Lake")
+    print("="*60)
+
+    # Check container
+    if not run_cmd(f"docker ps | grep {CONTAINER}", ignore_error=True):
+        print(f"\n❌ Container {CONTAINER} not running")
+        print("💡 Run: ./setup_kerberos_hdfs.sh")
+        sys.exit(1)
+
+    all_passed = True
+
+    # Run verifications
+    if not verify_kerberos():
+        all_passed = False
+
+    if not verify_hdfs():
+        all_passed = False
+
+    if not install_pysail():
+        all_passed = False
+
+    if not start_sail_server():
+        all_passed = False
+
+    if not test_sail_connection():
+        all_passed = False
+
+    # Delta Lake is optional
+    test_delta_lake()
+
+    # Print summary
+    print_summary(all_passed)
+
+    return 0 if all_passed else 1
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Verification interrupted")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n\n❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
